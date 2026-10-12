@@ -31,4 +31,8 @@ Validation reports every bad row at once: bad dates, non-positive amounts, dupli
 
 ## Mac app
 
-Built by GitHub Actions (`.github/workflows/build-mac.yml`) on each push, or via *Actions → Build Mac app → Run workflow*. Download the `CheckRun-mac` artifact, unzip, and right-click → Open the first time (the app is unsigned).
+Built by GitHub Actions (`.github/workflows/build-apps.yml`) on each push, or via *Actions → Build apps → Run workflow*. Download the `CheckRun-mac` artifact, unzip, and right-click → Open the first time (the app is unsigned).
+
+## Windows app
+
+Same workflow builds `CheckRun.exe` (artifact `CheckRun-windows`). Windows SmartScreen may warn since it is unsigned: More info → Run anyway.
