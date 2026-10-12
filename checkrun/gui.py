@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from checkrun import core, settings
+from . import core, settings
 
 try:  # optional: real drag-and-drop. Without it the box is click-to-browse.
     from tkinterdnd2 import DND_FILES, TkinterDnD
