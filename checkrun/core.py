@@ -43,8 +43,20 @@ IIF_HEADER = (
 )
 
 
+BOOTH_SHEET = "booth totals"
+IGNORED_VENDORS = {"concessions"}  # the store's own booth: not paid by check
+
+
 class CheckRunError(Exception):
     """User-facing problem with the input data. Message lists every issue found."""
+
+
+@dataclass
+class FillResult:
+    count: int
+    total: Decimal
+    notes: list[str]
+    next_check_no: int | None = None  # set for Booth Totals reports (auto-numbered)
 
 
 @dataclass
@@ -127,9 +139,82 @@ def read_raw(path: str | Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def fill_template(raw_path: str | Path, out_path: str | Path, template_path: str | Path = TEMPLATE_PATH) -> int:
-    """Copy raw rows into the template's Check Data tab and save it. Returns row count."""
-    df = read_raw(raw_path)
+def _booth_sheet(path: Path) -> str | None:
+    if path.suffix.lower() in {".csv", ".txt"}:
+        return None
+    for name in pd.ExcelFile(path).sheet_names:
+        if _norm(name) == BOOTH_SHEET:
+            return name
+    return None
+
+
+def _period_label(path: Path) -> str:
+    """'sales_2026-10-01_2026-10-15.xls' -> '10/01-10/15/2026' (empty if no dates in the name)."""
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})\D+(\d{4})-(\d{2})-(\d{2})", path.stem)
+    if not m:
+        return ""
+    y1, m1, d1, y2, m2, d2 = m.groups()
+    return f"{m1}/{d1}-{m2}/{d2}/{y2}" if y1 == y2 else f"{m1}/{d1}/{y1}-{m2}/{d2}/{y2}"
+
+
+def read_booth_totals(path: str | Path, sheet: str, check_date: date, start_check_no: int) -> tuple[pd.DataFrame, list[str]]:
+    """One check per vendor for its Payout on the Booth Totals sheet. Returns (rows, notes)."""
+    path = Path(path)
+    df = pd.read_excel(path, sheet_name=sheet, dtype=object)
+    cols = {_norm(c): c for c in df.columns}
+    if "vendor" not in cols or "payout" not in cols:
+        raise CheckRunError(
+            f"The '{sheet}' sheet needs Vendor and Payout columns.\nColumns found: {', '.join(map(str, df.columns))}"
+        )
+    period = _period_label(path)
+    rows, notes, no = [], [], start_check_no
+    for rec in df.to_dict("records"):
+        vendor = _clean(rec[cols["vendor"]])
+        if not vendor or _norm(vendor) in {"total", "totals"}:
+            continue
+        payout = _to_amount(rec[cols["payout"]])
+        if payout is None:
+            raise CheckRunError(f"Booth Totals: bad Payout for {vendor!r}: {_clean(rec[cols['payout']])!r}")
+        payout = payout.quantize(Decimal("0.01"))
+        if _norm(vendor) in IGNORED_VENDORS:
+            notes.append(f"Ignored {vendor} (${payout:,.2f})")
+            continue
+        if payout <= 0:
+            notes.append(f"Skipped {vendor}: no payout")
+            continue
+        booth = _clean(rec[cols["booth"]]) if "booth" in cols else ""
+        memo = " ".join(x for x in (f"Booth {booth}" if booth else "", period) if x)
+        rows.append({"date": check_date, "payee": vendor, "amount": payout, "check_no": str(no), "memo": memo})
+        no += 1
+    if not rows:
+        raise CheckRunError("No payable vendors found on the Booth Totals sheet.")
+    return pd.DataFrame(rows), notes
+
+
+def fill_template(
+    raw_path: str | Path,
+    out_path: str | Path,
+    template_path: str | Path = TEMPLATE_PATH,
+    check_date: date | None = None,
+    start_check_no: int | None = None,
+) -> FillResult:
+    """Copy raw rows into the template's Check Data tab and save it.
+
+    A workbook with a 'Booth Totals' sheet is treated as a sales report: one check per vendor
+    payout, auto-numbered from start_check_no and dated check_date (default today).
+    Any other file must already have Date / Payee / Amount / Check Number columns.
+    """
+    raw_path = Path(raw_path)
+    notes: list[str] = []
+    next_no = None
+    sheet = _booth_sheet(raw_path)
+    if sheet:
+        if start_check_no is None:
+            raise CheckRunError("Enter the starting check number.")
+        df, notes = read_booth_totals(raw_path, sheet, check_date or date.today(), start_check_no)
+        next_no = start_check_no + len(df)
+    else:
+        df = read_raw(raw_path)
     checks = _validate(_rows_from_raw(df, _template_defaults(template_path)))
 
     wb = openpyxl.load_workbook(template_path)
@@ -152,7 +237,7 @@ def fill_template(raw_path: str | Path, out_path: str | Path, template_path: str
         ws.cell(r, COLUMN_OF["class_"]).value = c.class_ or None
     wb.calculation.fullCalcOnLoad = True  # template formulas recalc when opened in Excel
     wb.save(out_path)
-    return len(checks)
+    return FillResult(len(checks), sum((c.amount for c in checks), Decimal(0)), notes, next_no)
 
 
 def _template_defaults(template_path: str | Path) -> dict[str, str]:

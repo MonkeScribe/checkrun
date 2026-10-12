@@ -22,7 +22,7 @@ GOOD = [
 
 def test_end_to_end(tmp_path):
     filled, iif = tmp_path / "f.xlsx", tmp_path / "o.iif"
-    assert core.fill_template(raw_file(tmp_path, GOOD), filled) == 2
+    assert core.fill_template(raw_file(tmp_path, GOOD), filled).count == 2
     ws = openpyxl.load_workbook(filled)["Check Data"]
     assert ws["B3"].value == "Acme Motors" and ws["C3"].value == "Checking" and ws["D4"].value == "Dealer Checks"
     assert core.convert_template_to_iif(filled, iif) == 2
@@ -86,7 +86,7 @@ def test_unencodable_character(tmp_path):
 def test_csv_input(tmp_path):
     p = tmp_path / "r.csv"
     p.write_text("Payee,Date,Amount,Check Number\nZed,8/1/2026,12.5,55\n")
-    assert core.fill_template(p, tmp_path / "f.xlsx") == 1
+    assert core.fill_template(p, tmp_path / "f.xlsx").count == 1
 
 
 def test_summarize_flags_far_dates():
@@ -95,3 +95,31 @@ def test_summarize_flags_far_dates():
     out = core.summarize(cs, today=date(2026, 8, 16))
     assert "Checks: 2" in out and "01/01/2025 – 08/15/2026" in out and "$15.50" in out
     assert "1 check(s) are dated more than 30 days" in out and "#2" in out
+
+
+def booth_report(tmp_path):
+    p = tmp_path / "sales_2026-10-01_2026-10-15.xlsx"
+    booth = pd.DataFrame({
+        "Vendor": ["Ann A", "Concessions", "Zero Z", "Bob B"],
+        "Booth": ["001", "700", "002", 3],
+        "Payout": [100.1, 130.5, 0, 55.55],
+    })
+    with pd.ExcelWriter(p) as w:
+        pd.DataFrame({"x": [1]}).to_excel(w, sheet_name="Store Totals", index=False)
+        booth.to_excel(w, sheet_name="Booth Totals", index=False)
+    return p
+
+
+def test_booth_totals_ignores_concessions_and_zero(tmp_path):
+    p = booth_report(tmp_path)
+    res = core.fill_template(p, tmp_path / "f.xlsx", check_date=date(2026, 10, 15), start_check_no=7001)
+    assert res.count == 2 and res.total == Decimal("155.65") and res.next_check_no == 7003
+    assert any("Concessions" in n for n in res.notes) and any("Zero Z" in n for n in res.notes)
+    cs = core.read_template_checks(tmp_path / "f.xlsx")
+    assert [(c.payee, c.check_no, c.amount) for c in cs] == [("Ann A", "7001", Decimal("100.10")), ("Bob B", "7002", Decimal("55.55"))]
+    assert cs[0].date == date(2026, 10, 15) and cs[0].memo == "Booth 001 10/01-10/15/2026" and cs[1].memo.startswith("Booth 3 ")
+
+
+def test_booth_totals_needs_start_number(tmp_path):
+    with pytest.raises(core.CheckRunError, match="starting check number"):
+        core.fill_template(booth_report(tmp_path), tmp_path / "f.xlsx")
