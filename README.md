@@ -28,3 +28,7 @@ Validation reports every bad row at once: bad dates, non-positive amounts, dupli
 - The template's own *IIF Output* tab only covers 60 checks; this tool has no such limit.
 - Account/payee names must match QuickBooks exactly. Back up the company file before importing; IIF import can't be undone.
 - Tests: `pytest`.
+
+## Mac app
+
+Built by GitHub Actions (`.github/workflows/build-mac.yml`) on each push, or via *Actions → Build Mac app → Run workflow*. Download the `CheckRun-mac` artifact, unzip, and right-click → Open the first time (the app is unsigned).
