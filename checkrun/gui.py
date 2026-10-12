@@ -22,8 +22,8 @@ class App(_Root):
     def __init__(self) -> None:
         super().__init__()
         self.title("Check Run → QuickBooks IIF")
-        self.geometry("460x600")
-        self.minsize(440, 560)
+        self.geometry("500x640")
+        self.minsize(480, 600)
         self._set_icon()
 
         cfg = settings.load()
@@ -34,6 +34,8 @@ class App(_Root):
         self.check_date = tk.StringVar(value=f"{date.today():%m/%d/%Y}")
         self.start_no = tk.StringVar(value=str(cfg.get("next_check_no", "")))
         self.pending_next: int | None = None
+        saved_sort = cfg.get("sort_by")
+        self.sort_by = tk.StringVar(value=saved_sort if saved_sort in core.SORT_OPTIONS else "vendor")
 
         pad = {"padx": 14, "pady": 6}
 
@@ -57,6 +59,12 @@ class App(_Root):
         ttk.Entry(opts, textvariable=self.check_date, width=11).pack(side="left", padx=(4, 12))
         ttk.Label(opts, text="Starting check #:").pack(side="left")
         ttk.Entry(opts, textvariable=self.start_no, width=8).pack(side="left", padx=4)
+
+        sort = ttk.Frame(self)
+        sort.pack(fill="x", **pad)
+        ttk.Label(sort, text="Sort checks by:").pack(side="left")
+        for key, label in core.SORT_OPTIONS.items():
+            ttk.Radiobutton(sort, text=label, value=key, variable=self.sort_by).pack(side="left", padx=6)
 
         folder = ttk.Frame(self)
         folder.pack(fill="x", **pad)
@@ -144,7 +152,8 @@ class App(_Root):
         start = self.start_no.get().strip()
         try:
             res = core.fill_template(
-                self.raw_path, dest, check_date=check_date, start_check_no=int(start) if start.isdigit() else None
+                self.raw_path, dest, check_date=check_date, start_check_no=int(start) if start.isdigit() else None,
+                sort_by=self.sort_by.get(),
             )
         except core.CheckRunError as e:
             messagebox.showerror("Can't fill template", str(e))
@@ -153,6 +162,7 @@ class App(_Root):
         except Exception as e:  # unreadable file, permissions, etc.
             messagebox.showerror("Error", f"{type(e).__name__}: {e}")
             return
+        settings.save({"sort_by": self.sort_by.get()})
         self.filled_path, self.pending_next, n = dest, res.next_check_no, res.count
         self.iif_btn.config(state="normal")
         extra = "".join(f"\n• {x}" for x in res.notes)
@@ -180,7 +190,7 @@ class App(_Root):
             n = len(checks)
             if self.pending_next:  # next run continues the check sequence
                 self.start_no.set(str(self.pending_next))
-                settings.save({**settings.load(), "next_check_no": self.pending_next})
+                settings.save({"next_check_no": self.pending_next})
                 self.pending_next = None
         except core.CheckRunError as e:
             messagebox.showerror("Can't convert", str(e))

@@ -45,6 +45,7 @@ IIF_HEADER = (
 
 BOOTH_SHEET = "booth totals"
 IGNORED_VENDORS = {"concessions"}  # the store's own booth: not paid by check
+SORT_OPTIONS = {"vendor": "Alphabetical (vendor name)", "booth": "Booth number (alphabetical)"}
 
 
 class CheckRunError(Exception):
@@ -157,8 +158,16 @@ def _period_label(path: Path) -> str:
     return f"{m1}/{d1}-{m2}/{d2}/{y2}" if y1 == y2 else f"{m1}/{d1}/{y1}-{m2}/{d2}/{y2}"
 
 
-def read_booth_totals(path: str | Path, sheet: str, check_date: date, start_check_no: int) -> tuple[pd.DataFrame, list[str]]:
-    """One check per vendor for its Payout on the Booth Totals sheet. Returns (rows, notes)."""
+def read_booth_totals(
+    path: str | Path, sheet: str, check_date: date, start_check_no: int, sort_by: str = "vendor"
+) -> tuple[pd.DataFrame, list[str]]:
+    """One check per vendor for its Payout on the Booth Totals sheet. Returns (rows, notes).
+
+    sort_by: "vendor" (name A-Z) or "booth" (booth text A-Z, so 002 sorts before 100, 12D, ... AAA).
+    Check numbers are assigned after sorting.
+    """
+    if sort_by not in SORT_OPTIONS:
+        raise CheckRunError(f"Unknown sort option: {sort_by!r}")
     path = Path(path)
     df = pd.read_excel(path, sheet_name=sheet, dtype=object)
     cols = {_norm(c): c for c in df.columns}
@@ -167,7 +176,7 @@ def read_booth_totals(path: str | Path, sheet: str, check_date: date, start_chec
             f"The '{sheet}' sheet needs Vendor and Payout columns.\nColumns found: {', '.join(map(str, df.columns))}"
         )
     period = _period_label(path)
-    rows, notes, no = [], [], start_check_no
+    rows, notes = [], []
     for rec in df.to_dict("records"):
         vendor = _clean(rec[cols["vendor"]])
         if not vendor or _norm(vendor) in {"total", "totals"}:
@@ -184,10 +193,16 @@ def read_booth_totals(path: str | Path, sheet: str, check_date: date, start_chec
             continue
         booth = _clean(rec[cols["booth"]]) if "booth" in cols else ""
         memo = " ".join(x for x in (f"Booth {booth}" if booth else "", period) if x)
-        rows.append({"date": check_date, "payee": vendor, "amount": payout, "check_no": str(no), "memo": memo})
-        no += 1
+        rows.append({"date": check_date, "payee": vendor, "amount": payout, "memo": memo, "_booth": booth})
     if not rows:
         raise CheckRunError("No payable vendors found on the Booth Totals sheet.")
+    if sort_by == "booth":
+        rows.sort(key=lambda r: (r["_booth"].casefold(), r["payee"].casefold()))
+    else:
+        rows.sort(key=lambda r: (r["payee"].casefold(), r["_booth"].casefold()))
+    for i, r in enumerate(rows):
+        r["check_no"] = str(start_check_no + i)
+        del r["_booth"]
     return pd.DataFrame(rows), notes
 
 
@@ -197,11 +212,12 @@ def fill_template(
     template_path: str | Path = TEMPLATE_PATH,
     check_date: date | None = None,
     start_check_no: int | None = None,
+    sort_by: str = "vendor",
 ) -> FillResult:
     """Copy raw rows into the template's Check Data tab and save it.
 
     A workbook with a 'Booth Totals' sheet is treated as a sales report: one check per vendor
-    payout, auto-numbered from start_check_no and dated check_date (default today).
+    payout, sorted by sort_by, auto-numbered from start_check_no and dated check_date (default today).
     Any other file must already have Date / Payee / Amount / Check Number columns.
     """
     raw_path = Path(raw_path)
@@ -211,7 +227,7 @@ def fill_template(
     if sheet:
         if start_check_no is None:
             raise CheckRunError("Enter the starting check number.")
-        df, notes = read_booth_totals(raw_path, sheet, check_date or date.today(), start_check_no)
+        df, notes = read_booth_totals(raw_path, sheet, check_date or date.today(), start_check_no, sort_by)
         next_no = start_check_no + len(df)
     else:
         df = read_raw(raw_path)

@@ -123,3 +123,26 @@ def test_booth_totals_ignores_concessions_and_zero(tmp_path):
 def test_booth_totals_needs_start_number(tmp_path):
     with pytest.raises(core.CheckRunError, match="starting check number"):
         core.fill_template(booth_report(tmp_path), tmp_path / "f.xlsx")
+
+
+def test_booth_sort_orders(tmp_path):
+    p = tmp_path / "r.xlsx"
+    booth = pd.DataFrame({
+        "Vendor": ["Zed", "Amy", "Max", "Joe", "Kim"],
+        "Booth": ["BAM", "100", "002", "12D", "009"],
+        "Payout": [10, 10, 10, 10, 10],
+    })
+    with pd.ExcelWriter(p) as w:
+        booth.to_excel(w, sheet_name="Booth Totals", index=False)
+
+    def order(sort_by):
+        core.fill_template(p, tmp_path / "f.xlsx", start_check_no=1, sort_by=sort_by)
+        return [(c.payee, c.check_no) for c in core.read_template_checks(tmp_path / "f.xlsx")]
+
+    assert order("booth") == [("Max", "1"), ("Kim", "2"), ("Amy", "3"), ("Joe", "4"), ("Zed", "5")]  # 002 first
+    assert order("vendor") == [("Amy", "1"), ("Joe", "2"), ("Kim", "3"), ("Max", "4"), ("Zed", "5")]
+
+
+def test_unknown_sort(tmp_path):
+    with pytest.raises(core.CheckRunError, match="Unknown sort"):
+        core.fill_template(booth_report(tmp_path), tmp_path / "f.xlsx", start_check_no=1, sort_by="nope")

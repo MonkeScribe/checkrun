@@ -15,6 +15,8 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
+    """Merge `data` into the stored settings (other keys are kept)."""
+    data = {**load(), **data}
     try:
         PATH.parent.mkdir(parents=True, exist_ok=True)
         PATH.write_text(json.dumps(data, indent=2))
