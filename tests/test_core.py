@@ -87,3 +87,11 @@ def test_csv_input(tmp_path):
     p = tmp_path / "r.csv"
     p.write_text("Payee,Date,Amount,Check Number\nZed,8/1/2026,12.5,55\n")
     assert core.fill_template(p, tmp_path / "f.xlsx") == 1
+
+
+def test_summarize_flags_far_dates():
+    cs = [core.Check(date(2026, 8, 15), "A", "B", "E", Decimal("10"), "1", "", ""),
+          core.Check(date(2025, 1, 1), "B", "B", "E", Decimal("5.5"), "2", "", "")]
+    out = core.summarize(cs, today=date(2026, 8, 16))
+    assert "Checks: 2" in out and "01/01/2025 – 08/15/2026" in out and "$15.50" in out
+    assert "1 check(s) are dated more than 30 days" in out and "#2" in out

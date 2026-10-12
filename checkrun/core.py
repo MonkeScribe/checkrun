@@ -235,6 +235,24 @@ def _validate(rows: list[tuple[int, dict]]) -> list[Check]:
     return checks
 
 
+def summarize(checks: list[Check], today: date | None = None) -> str:
+    """Human-readable recap used for the 'are these dates right?' confirmation."""
+    today = today or date.today()
+    dates = sorted({c.date for c in checks})
+    total = sum(c.amount for c in checks)
+    rng = f"{dates[0]:%m/%d/%Y}" if len(dates) == 1 else f"{dates[0]:%m/%d/%Y} – {dates[-1]:%m/%d/%Y}"
+    lines = [
+        f"Checks: {len(checks)}",
+        f"Check date(s): {rng}",
+        f"Total: ${total:,.2f}",
+        f"Today is {today:%m/%d/%Y}.",
+    ]
+    odd = [c for c in checks if abs((c.date - today).days) > 30]
+    if odd:
+        lines.append(f"\n⚠ {len(odd)} check(s) are dated more than 30 days from today (e.g. check #{odd[0].check_no}: {odd[0].date:%m/%d/%Y}).")
+    return "\n".join(lines)
+
+
 def build_iif(checks: list[Check]) -> str:
     """Return the full IIF text (LF line endings, written as CRLF on save)."""
     lines = [IIF_HEADER.rstrip("\n")]

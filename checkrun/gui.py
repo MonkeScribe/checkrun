@@ -22,8 +22,9 @@ class App(_Root):
     def __init__(self) -> None:
         super().__init__()
         self.title("Check Run → QuickBooks IIF")
-        self.geometry("560x420")
-        self.minsize(520, 380)
+        self.geometry("460x600")
+        self.minsize(440, 560)
+        self._set_icon()
 
         cfg = settings.load()
         self.raw_path: Path | None = None
@@ -33,11 +34,15 @@ class App(_Root):
 
         pad = {"padx": 14, "pady": 6}
 
+        # Fixed-size frame keeps the drop box a true square.
+        box = tk.Frame(self, width=240, height=240)
+        box.pack_propagate(False)
+        box.pack(pady=10)
         self.drop = tk.Label(
-            self, text="Drop raw data file here\n(or click to browse)", relief="groove", bd=2,
-            height=5, cursor="hand2", wraplength=480,
+            box, text="Drop raw data file here\n(or click to browse)", relief="groove", bd=3,
+            cursor="hand2", wraplength=200,
         )
-        self.drop.pack(fill="x", **pad)
+        self.drop.pack(fill="both", expand=True)
         self.drop.bind("<Button-1>", lambda _e: self.browse_raw())
         if DND_FILES:
             self.drop.drop_target_register(DND_FILES)
@@ -55,7 +60,24 @@ class App(_Root):
         self.iif_btn.pack(fill="x", padx=14, pady=(0, 6))
         ttk.Button(self, text="Use a different filled template…", command=self.browse_filled).pack(anchor="w", padx=14)
 
-        ttk.Label(self, textvariable=self.status, wraplength=520, justify="left").pack(fill="both", expand=True, **pad)
+        ttk.Label(self, textvariable=self.status, wraplength=420, justify="left").pack(fill="both", expand=True, **pad)
+
+        # Enter runs whichever step is next.
+        self.bind("<Return>", lambda _e: self.do_next())
+
+    def _set_icon(self) -> None:
+        icon = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
+        try:
+            self._icon_img = tk.PhotoImage(file=str(icon))
+            self.iconphoto(True, self._icon_img)
+        except (tk.TclError, OSError):
+            pass  # cosmetic only
+
+    def do_next(self) -> None:
+        if str(self.iif_btn["state"]) == "normal" and self.filled_path:
+            self.do_iif()
+        elif str(self.fill_btn["state"]) == "normal":
+            self.do_fill()
 
     # -- inputs -------------------------------------------------------------
     def on_drop(self, event) -> None:
@@ -124,7 +146,17 @@ class App(_Root):
             return
         dest = out / (self.filled_path.stem.removesuffix("_template") + ".iif")
         try:
-            n = core.convert_template_to_iif(self.filled_path, dest)
+            checks = core.read_template_checks(self.filled_path)
+            # Default button is "No" so a stray Enter can't confirm the dates.
+            if not messagebox.askyesno(
+                "Verify dates",
+                core.summarize(checks) + "\n\nAre these the correct dates?\nCreate the IIF file?",
+                icon="warning", default="no",
+            ):
+                self.status.set("Cancelled. Fix the dates in the template, then convert again.")
+                return
+            core.write_iif(checks, dest)
+            n = len(checks)
         except core.CheckRunError as e:
             messagebox.showerror("Can't convert", str(e))
             return
